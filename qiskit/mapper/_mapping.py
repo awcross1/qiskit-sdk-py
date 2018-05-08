@@ -626,7 +626,7 @@ def test_trig_solution(theta, phi, lamb, xi, theta1, theta2):
     return sympy.Max(delta1, delta2, delta3, delta4)
 
 
-def yzy_to_zyz(xi, theta1, theta2, eps=1e-9):
+def yzy_to_zyz(xi, theta1, theta2, eps=1e-5):
     """Express a Y.Z.Y single qubit gate as a Z.Y.Z gate.
 
     Solve the equation

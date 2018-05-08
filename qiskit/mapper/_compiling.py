@@ -37,7 +37,7 @@ def euler_angles_1q(unitary_matrix):
     element of the tuple is the OpenQASM gate name with parameter
     values substituted.
     """
-    small = 1e-10
+    small = 1e-6
     if unitary_matrix.shape != (2, 2):
         raise MapperError("compiling.euler_angles_1q expected 2x2 matrix")
     phase = np.linalg.det(unitary_matrix)**(-1.0/2.0)
@@ -49,9 +49,9 @@ def euler_angles_1q(unitary_matrix):
     # U[1, 1] = exp(i(phi+lambda)/2) * cos(theta/2)
     # Find theta
     if abs(U[0, 0]) > small:
-        theta = 2 * math.acos(abs(U[0, 0]))
+        theta = 2 * math.acos(round(abs(U[0, 0]), 10))
     else:
-        theta = 2 * math.asin(abs(U[1, 0]))
+        theta = 2 * math.asin(round(abs(U[1, 0]), 10))
     # Find phi and lambda
     phase11 = 0.0
     phase10 = 0.0
@@ -171,10 +171,33 @@ def two_qubit_kak(unitary_matrix):
     Uprime = np.dot(np.transpose(B.conjugate()), np.dot(U, B))
     # M^2 = trans(U') . U'
     M2 = np.dot(np.transpose(Uprime), Uprime)
+    # If M2 is close to real, round to a real matrix,
+    # so that we get the correct behavior from eig
+    use_eigh = False
+    M2_real = False
+    if np.linalg.norm(M2 - np.real(M2), 2) < 1e-6:
+        M2 = np.real(M2)
+        M2_real = True
+        if np.linalg.norm(M2 - M2.transpose()) < 1e-6:
+            use_eigh = True
     # Diagonalize M2
     # Must use diagonalization routine which finds a real orthogonal matrix P
     # when M2 is real.
-    D, P = np.linalg.eig(M2)
+    # If M2 is already diagonal, eig fails.
+    if np.linalg.norm(M2 - np.diag(np.diag(M2)), 2) < 1e-6:
+        # M2 already diagonal
+        D = np.diag(M2)
+        P = np.array([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]], dtype=complex)
+    else:
+        # Diagonalize
+        if use_eigh:
+            D, P = np.linalg.eigh(M2)
+        else:
+            D, P = np.linalg.eig(M2)
+    if M2_real:
+        P = P + 1j * np.zeros(P.shape)
+        D = D + 1j * np.zeros(D.shape)
+    PDPdag = np.dot(np.dot(P, np.diag(D)), np.transpose(P.conjugate()))
     # If det(P) == -1, apply a swap to make P in SO(4)
     if abs(np.linalg.det(P)+1) < 1e-5:
         swap = np.array([[1, 0, 0, 0],
@@ -204,9 +227,21 @@ def two_qubit_kak(unitary_matrix):
     xx = np.kron(x, x)
     yy = np.kron(y, y)
     zz = np.kron(z, z)
-    alpha = math.atan(np.trace(np.imag(np.dot(A, xx)))/np.trace(np.real(A)))
-    beta = math.atan(np.trace(np.imag(np.dot(A, yy)))/np.trace(np.real(A)))
-    gamma = math.atan(np.trace(np.imag(np.dot(A, zz)))/np.trace(np.real(A)))
+    # print("A = ", A)
+    denom = np.trace(np.real(A))
+    # print("denom = ", denom)
+    numxx = np.trace(np.imag(np.dot(A, xx)))
+    numyy = np.trace(np.imag(np.dot(A, yy)))
+    numzz = np.trace(np.imag(np.dot(A, zz)))
+    # print("numxx = ", numxx)
+    # print("numyy = ", numyy)
+    # print("numzz = ", numzz)
+    alpha = math.atan(numxx/denom)
+    beta = math.atan(numyy/denom)
+    gamma = math.atan(numzz/denom)
+    # print("alpha = ", alpha)
+    # print("beta = ", beta)
+    # print("gamma = ", gamma)
     # K1 = kron(U1, U2) and K2 = kron(V1, V2)
     # Find the matrices U1, U2, V1, V2
     L = K1[0:2, 0:2]

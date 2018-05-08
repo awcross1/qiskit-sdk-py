@@ -1271,6 +1271,150 @@ class DAGCircuit:
                 layers_list.append(l_dict)
         return layers_list
 
+    def collect_cx_blocks(self):
+        """Collect blocks of adjacent gates acting on a pair of "cx" qubits.
+
+        The blocks contain "op" nodes in topological sort order
+        such that all gates in a block act on the same pair of
+        qubits and are adjacent in the circuit. The blocks are built
+        by examining predecessors and successors of "cx" gates in
+        the circuit. Gates with names "u1, u2, u3, cx, id" will be included.
+
+        Return a list of tuples of "op" node labels.
+        """
+        good_names = ["cx", "u1", "u2", "u3", "id"]
+        block_list = []
+        ts = list(nx.topological_sort(self.multi_graph))
+        nodes_seen = dict(zip(ts, [False] * len(ts)))
+        for node in ts:
+            nd = self.multi_graph.node[node]
+            group = []
+            # Explore predecessors and successors of cx gates
+            if nd["name"] == "cx" and len(nd["cargs"]) == 0 \
+               and nd["condition"] is None and not nodes_seen[node]:
+                these_qubits = sorted(nd["qargs"])
+                # print("// looking at node %d on %s" % (node, str(these_qubits)))
+                # Explore predecessors of the "cx" node
+                pred = list(self.multi_graph.predecessors(node))
+                explore = True
+                while explore:
+                    pred_next = []
+                    # print("//   pred = %s, types = %s" % (str(pred), str(list(map(lambda x: self.multi_graph.node[x]["name"], pred)))))
+                    # If there is one predecessor, add it if its on the right qubits
+                    if len(pred) == 1 and not nodes_seen[pred[0]]:
+                        pnd = self.multi_graph.node[pred[0]]
+                        if pnd["name"] in good_names:
+                            if (pnd["name"] == "cx" and sorted(pnd["qargs"]) == these_qubits) or \
+                                pnd["name"] != "cx":
+                                group.append(pred[0])
+                                nodes_seen[pred[0]] = True
+                                pred_next.extend(self.multi_graph.predecessors(pred[0]))
+                    # If there are two, then we consider cases
+                    elif len(pred) == 2:
+                        # First, check if there is a relationship
+                        if pred[0] in self.multi_graph.predecessors(pred[1]):
+                            sorted_pred = [pred[1], pred[0]]
+                        elif pred[1] in self.multi_graph.predecessors(pred[0]):
+                            sorted_pred = [pred[0], pred[1]]
+                        else:
+                            sorted_pred = pred
+                        if self.multi_graph.node[sorted_pred[0]]["name"] == "cx" and \
+                           self.multi_graph.node[sorted_pred[1]]["name"] == "cx":
+                            break  # stop immediately if we hit a pair of cx
+                        # Examine each predecessor
+                        for p in sorted_pred:
+                            pnd = self.multi_graph.node[p]
+                            if pnd["name"] not in good_names:
+                                continue
+                            # If a predecessor is a single qubit gate, add it
+                            if pnd["name"] != "cx":
+                                if not nodes_seen[p]:
+                                    group.append(p)
+                                    nodes_seen[p] = True
+                                    pred_next.extend(self.multi_graph.predecessors(p))
+                            else:
+                                # If cx, check qubits
+                                pred_qubits = sorted(pnd["qargs"])
+                                if pred_qubits == these_qubits:
+                                    # add if on same qubits
+                                    if not nodes_seen[p]:
+                                        group.append(p)
+                                        nodes_seen[p] = True
+                                        pred_next.extend(self.multi_graph.predecessors(p))
+                                else:
+                                    # remove qubit from consideration if not
+                                    these_qubits = list(set(these_qubits) -
+                                                        set(pred_qubits))
+                    # Update predecessors
+                    # Stop if there aren't any more
+                    pred = list(set(pred_next))
+                    if len(pred) == 0:
+                        explore = False
+                # Reverse the predecessor list and append the "cx" node
+                group.reverse()
+                group.append(node)
+                nodes_seen[node] = True
+                # Reset these_qubits
+                these_qubits = sorted(nd["qargs"])
+                # Explore successors of the "cx" node
+                succ = list(self.multi_graph.successors(node))
+                explore = True
+                while explore:
+                    succ_next = []
+                    # print("//   succ = %s, types = %s" % (str(succ), str(list(map(lambda x: self.multi_graph.node[x]["name"], succ)))))
+                    # If there is one successor, add it if its on the right qubits
+                    if len(succ) == 1 and not nodes_seen[succ[0]]:
+                        snd = self.multi_graph.node[succ[0]]
+                        if snd["name"] in good_names:
+                            if (snd["name"] == "cx" and sorted(snd["qargs"]) == these_qubits) or \
+                                snd["name"] != "cx":
+                                group.append(succ[0])
+                                nodes_seen[succ[0]] = True
+                                succ_next.extend(self.multi_graph.successors(succ[0]))
+                    # If there are two, then we consider cases
+                    elif len(succ) == 2:
+                        # First, check if there is a relationship
+                        if succ[0] in self.multi_graph.successors(succ[1]):
+                            sorted_succ = [succ[1], succ[0]]
+                        elif succ[1] in self.multi_graph.successors(succ[0]):
+                            sorted_succ = [succ[0], succ[1]]
+                        else:
+                            sorted_succ = succ
+                        if self.multi_graph.node[sorted_succ[0]]["name"] == "cx" and \
+                           self.multi_graph.node[sorted_succ[1]]["name"] == "cx":
+                            break  # stop immediately if we hit a pair of cx
+                        # Examine each successor
+                        for s in sorted_succ:
+                            snd = self.multi_graph.node[s]
+                            if snd["name"] not in good_names:
+                                continue
+                            # If a successor is a single qubit gate, add it
+                            if snd["name"] != "cx":
+                                if not nodes_seen[s]:
+                                    group.append(s)
+                                    nodes_seen[s] = True
+                                    succ_next.extend(self.multi_graph.successors(s))
+                            else:
+                                # If cx, check qubits
+                                succ_qubits = sorted(snd["qargs"])
+                                if succ_qubits == these_qubits:
+                                    # add if on same qubits
+                                    if not nodes_seen[s]:
+                                        group.append(s)
+                                        nodes_seen[s] = True
+                                        succ_next.extend(self.multi_graph.successors(s))
+                                else:
+                                    # remove qubit from consideration if not
+                                    these_qubits = list(set(these_qubits) -
+                                                        set(succ_qubits))
+                    # Update successors
+                    # Stop if there aren't any more
+                    succ = list(set(succ_next))
+                    if len(succ) == 0:
+                        explore = False
+                block_list.append(tuple(group))
+        return block_list
+
     def collect_runs(self, namelist):
         """Return a set of runs of "op" nodes with the given names.
 
